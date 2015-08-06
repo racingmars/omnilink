@@ -12,16 +12,20 @@ import (
 	"time"
 )
 
+// The Omni structure represents an instance of a connection to an Omni
+// controller.
 type Omni struct {
 	c          *net.TCPConn // Connection to Omni controller
 	address    *net.TCPAddr // Address of Omni controller
 	key        []byte       // AES key
+	sessionID  []byte       // Session ID
 	sessionKey []byte       // AES session key
 	seqNum     uint16       // packet sequence number
 	seqMutex   sync.Mutex   // protect sequence number
 	buf        []byte       // incoming data buffer
 }
 
+// Connect this Omni instance to the controller specified in the parameters.
 func Connect(host, port string, key []byte) (*Omni, error) {
 	var omni Omni
 	omni.key = key
@@ -46,6 +50,12 @@ func Connect(host, port string, key []byte) (*Omni, error) {
 	omni.c.SetKeepAlivePeriod(time.Duration(30) * time.Second)
 	omni.c.SetKeepAlive(true)
 
+	err = omni.negotiateNewSession()
+	if err != nil {
+		omni.c.Close()
+		return nil, err
+	}
+
 	return &omni, nil
 }
 
@@ -67,6 +77,7 @@ func (omni *Omni) negotiateNewSession() error {
 	_, err := omni.c.Write(msg)
 
 	if err != nil {
+		omni.c.Close()
 		return err
 	}
 
@@ -76,16 +87,19 @@ func (omni *Omni) negotiateNewSession() error {
 		n, err := omni.c.Read(omni.buf[nn:])
 		//TODO: should we have a timeout here?
 		if err != nil {
+			omni.c.Close()
 			return err
 		}
 		nn += n
 	}
 
 	if omni.buf[0] != msg[0] || omni.buf[1] != msg[1] {
+		omni.c.Close()
 		return errors.New("New Session response seq num doesn't match request.")
 	}
 
 	if pktMsgType(omni.buf[2]) != pktAckNewSession {
+		omni.c.Close()
 		return fmt.Errorf("New Session response was wrong type: %x.", omni.buf[2])
 	}
 
@@ -93,12 +107,60 @@ func (omni *Omni) negotiateNewSession() error {
 	for nn < 11 {
 		n, err := omni.c.Read(omni.buf[nn:])
 		if err != nil {
+			omni.c.Close()
 			return err
 		}
 		nn += n
 	}
 
-	//sessionID := omni.buf[6:11]
+	var keyArray [16]byte
+	var sessionArray [5]byte
+
+	copy(keyArray[:], omni.key)
+	copy(sessionArray[:], omni.buf[6:11])
+
+	sessionKey := deriveSessionKey(keyArray, sessionArray)
+	if len(sessionKey) != 16 {
+		omni.c.Close()
+		return errors.New("Bad session key length.")
+	}
+	omni.sessionKey = sessionKey[:]
+
+	pkt = &packet{seqnum: omni.getSeqNum(), msgtype: pktReqSecure,
+		data: omni.sessionID}
+	msg, _ = pkt.preparePacket(omni.sessionKey)
+	_, err = omni.c.Write(msg)
+
+	if err != nil {
+		omni.c.Close()
+		return err
+	}
+
+	nn = 0
+	for nn < 4 {
+		n, err := omni.c.Read(omni.buf[nn:])
+		//TODO: should we have a timeout here?
+		if err != nil {
+			omni.c.Close()
+			return err
+		}
+		nn += n
+	}
+
+	if omni.buf[0] != msg[0] || omni.buf[1] != msg[1] {
+		omni.c.Close()
+		return errors.New("New Session response seq num doesn't match request.")
+	}
+
+	if pktMsgType(omni.buf[2]) != pktAckSecure {
+		omni.c.Close()
+		return fmt.Errorf("Secure Session response was wrong type: %x.", omni.buf[2])
+	}
+
+	return nil
+}
+
+func (omni *Omni) readEncryptedPacket() *packet {
 
 	return nil
 }
