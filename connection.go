@@ -5,6 +5,7 @@
 package omnilink
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -126,6 +127,7 @@ func (omni *Omni) negotiateNewSession() error {
 	}
 	omni.sessionKey = sessionKey[:]
 
+	// Now send the Request Secure Session command
 	pkt = &packet{seqnum: omni.getSeqNum(), msgtype: pktReqSecure,
 		data: omni.sessionID}
 	msg, _ = pkt.preparePacket(omni.sessionKey)
@@ -149,13 +151,36 @@ func (omni *Omni) negotiateNewSession() error {
 
 	if omni.buf[0] != msg[0] || omni.buf[1] != msg[1] {
 		omni.c.Close()
-		return errors.New("New Session response seq num doesn't match request.")
+		return errors.New("New Secure response seq num doesn't match request.")
 	}
 
 	if pktMsgType(omni.buf[2]) != pktAckSecure {
 		omni.c.Close()
 		return fmt.Errorf("Secure Session response was wrong type: %x.", omni.buf[2])
 	}
+
+	// Good response, let's read 16 bytes of encrypted data
+	for nn < 20 {
+		n, err := omni.c.Read(omni.buf[nn:])
+		if err != nil {
+			omni.c.Close()
+			return err
+		}
+		nn += n
+	}
+
+	unenc, err := decryptPacketBlock(omni.sessionKey, omni.buf[0:2], omni.buf[4:20])
+	if err != nil {
+		omni.c.Close()
+		return err
+	}
+
+	if bytes.Compare(unenc[0:5], omni.sessionID) != 0 {
+		omni.c.Close()
+		return errors.New("Session ID in secure session response does not match.")
+	}
+
+	// I think we should have a good secure connection established now.
 
 	return nil
 }
