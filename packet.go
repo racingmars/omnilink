@@ -42,8 +42,8 @@ func (p *packet) preparePacket(sessionKey []byte) ([]byte, error) {
 	}
 
 	// Don't need to encrypt certain message types, so we're done
-	if p.msgtype != pktNoMessage && p.msgtype != pktReqNewSession &&
-		p.msgtype != pktAckNewSession {
+	if p.msgtype == pktNoMessage || p.msgtype == pktReqNewSession ||
+		p.msgtype == pktAckNewSession {
 		return buf.Bytes(), nil
 	}
 

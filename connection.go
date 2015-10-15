@@ -119,6 +119,7 @@ func (omni *Omni) negotiateNewSession() error {
 
 	copy(keyArray[:], omni.key)
 	copy(sessionArray[:], omni.buf[6:11])
+	omni.sessionID = sessionArray[:]
 
 	sessionKey := deriveSessionKey(keyArray, sessionArray)
 	if len(sessionKey) != 16 {
@@ -188,4 +189,8 @@ func (omni *Omni) negotiateNewSession() error {
 func (omni *Omni) readEncryptedPacket() *packet {
 
 	return nil
+}
+
+func (omni *Omni) Close() {
+	omni.c.Close()
 }
